@@ -2,10 +2,10 @@
 
 __author__="Jonas Stein (news@jonasstein.de)"
 
-import portage
-#import sys
-#import urllib
-import mechanize
+import os 
+import fnmatch
+import requests
+
 
 htmlstring_FAIL = """<basefont color="#FF2020">FAIL</font>"""
 htmlstring_OK = """<basefont color="#20FF20">OK</font>"""
@@ -22,48 +22,72 @@ htmlstring_HEAD = """ <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
 htmlstring_FOOTER = """</table> </body> </html>"""
 
 
+def find(pattern, path):
+    result = []
+    for root, dirs, files in os.walk(path):
+        for name in files:
+            if fnmatch.fnmatch(name, pattern):
+                result.append(os.path.join(root, name))
+    return result
+
+def dropQuotes(quotedString):
+    nostartquote = (quotedString.split('"')[1])
+    noendquote = (nostartquote.split('"')[0])
+    return(noendquote)
+    
+def getValue(key, filename):
+    key += "="
+    value = ""
+    for line in open(filename):
+        if key in line:
+            value = dropQuotes(line.split("=")[1])
+    return(value)
+
+
 def browsertest(url):
-    br = mechanize.Browser()
-    br.set_handle_redirect(True)
+    print(url)# "checking url: %s")%url
+
+
     try:
-        br.open_novisit(url)
-        return(htmlstring_OK)
-    except:
-        return(htmlstring_FAIL)
+        r = requests.get(url) 
+    except requests.exceptions.Timeout:
+        msg = "EE: Maybe set up for a retry, or continue in a retry loop"
+    except requests.exceptions.TooManyRedirects:
+        msg = "EE: Tell the user their URL was bad and try a different one"
+    except requests.exceptions.RequestException as e:
+        msg = "EE: catastrophic error. bail."
+        return(msg)    
+    return(r.status_code)    
     
 def pout(mystring):
     f = open("result.html", "a")
     f.write(mystring)
     f.close()
 
+
 def main():
     # init
-    porttree = portage.db[portage.root]['porttree']
 
     pout(htmlstring_HEAD)
     pout("""<body><table>""")
+    
+    ebuilds = find('*.ebuild', '/usr/portage')
 
-    all_cps = porttree.dbapi.cp_all()[1:30]
+    for thisEbuild in ebuilds:
+        package = {"name" : thisEbuild.split("/usr/portage/")[1],
+                   "description" : getValue("DESCRIPTION",thisEbuild),
+                   "homepage" : getValue("HOMEPAGE",thisEbuild),
+                   "webstatus" : browsertest(getValue("HOMEPAGE",thisEbuild)),
+                   "license" : getValue("LICENSE",thisEbuild)}
 
-    for cp in all_cps:
-        if (porttree.dep_bestmatch(cp)== "" ):
-            bestcpv = porttree.dep_match(cp)
+    
+        pout("""<tr><td>%s</td>""" % (package["name"]))
 
-        else:
-            bestcpv = porttree.dep_bestmatch(cp)
-            package = {'name':cp,
-                       'version':cp,
-                       'homepage':porttree.dbapi.aux_get(bestcpv, ["HOMEPAGE"])[0],
-                       'webstatus':browsertest(porttree.dbapi.aux_get(bestcpv, ["HOMEPAGE"])[0])}
-            print(cp,bestcpv)
-      
-            pout("""<tr><td>%(name)s</td>
-            <td><a href=%(homepage)s> %(homepage)s </a></td>
-            <td>%(webstatus)s</td></tr> """ % package)
-
+        pout("""<td><a href=%(homepage)s> %(homepage)s </a></td>
+        <td>%(webstatus)s</td>
+        <td><a href="https://bugs.gentoo.org/enter_bug.cgi?product=Gentoo Linux&format=guided">report bug</a></td></tr> """ % package)
 
     pout(htmlstring_FOOTER)
-
 
 
 if __name__ == '__main__':
